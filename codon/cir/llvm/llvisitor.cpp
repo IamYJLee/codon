@@ -29,6 +29,8 @@ const std::string INLINE_ATTR =
 const std::string NOINLINE_ATTR =
     ast::getMangledFunc("std.internal.attributes", "noinline");
 const std::string GPU_KERNEL_ATTR = ast::getMangledFunc("std.internal.gpu", "kernel");
+const std::string METAL_KERNEL_ATTR =
+    ast::getMangledFunc("std.internal.metal", "kernel");
 
 const std::string MAIN_UNCLASH = ".main.unclash";
 const std::string MAIN_CTOR = ".main.ctor";
@@ -66,6 +68,8 @@ std::string LLVMVisitor::getNameForFunction(const Func *x) {
   if (isA<ExternalFunc>(x) || util::hasAttribute(x, EXPORT_ATTR)) {
     return x->getUnmangledName();
   } else if (util::hasAttribute(x, GPU_KERNEL_ATTR)) {
+    return x->getName();
+  } else if (util::hasAttribute(x, METAL_KERNEL_ATTR)) {
     return x->getName();
   } else {
     return x->referenceString();
@@ -1958,6 +1962,11 @@ void LLVMVisitor::visit(const BodiedFunc *x) {
     func->addFnAttr(llvm::Attribute::AttrKind::NoInline);
   }
   if (fnAttributes && fnAttributes->has(GPU_KERNEL_ATTR)) {
+    func->addFnAttr(llvm::Attribute::AttrKind::NoInline);
+    func->addFnAttr(llvm::Attribute::get(*context, "kernel"));
+    func->setLinkage(llvm::GlobalValue::ExternalLinkage);
+  }
+  if (fnAttributes && fnAttributes->has(METAL_KERNEL_ATTR)) {
     func->addFnAttr(llvm::Attribute::AttrKind::NoInline);
     func->addFnAttr(llvm::Attribute::get(*context, "kernel"));
     func->setLinkage(llvm::GlobalValue::ExternalLinkage);

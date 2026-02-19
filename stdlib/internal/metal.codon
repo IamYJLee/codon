@@ -1,0 +1,370 @@
+# Copyright (C) 2022-2026 Exaloop Inc. <https://exaloop.io>
+
+from internal.dlopen import *
+
+SEL = cobj  # Objective-C selector type
+
+# Objective-C runtime (from libobjc.A.dylib)
+_objc_msgSend = Function[[cobj, cobj], cobj](cobj())
+_sel_registerName = Function[[cobj], SEL](cobj())
+
+# Multi-argument objc_msgSend variants
+# 3-arg: obj, sel, arg1 → result (e.g. newFunctionWithName:)
+_objc_msgSend_3 = Function[[cobj, cobj, cobj], cobj](cobj())
+# 4-arg: obj, sel, arg1, arg2 → result (e.g. newComputePipelineStateWithFunction:error:)
+_objc_msgSend_4 = Function[[cobj, cobj, cobj, cobj], cobj](cobj())
+# ptr+i64+i64 variant: obj, sel, length, options → result
+_objc_msgSend_i64_i64 = Function[[cobj, cobj, i64, i64], cobj](cobj())
+# 5-arg: obj, sel, arg1, arg2, arg3 → result
+# (e.g. newLibraryWithSource:options:error:)
+_objc_msgSend_5 = Function[[cobj, cobj, cobj, cobj, cobj], cobj](cobj())
+# cobj+i64+i64 variant: obj, sel, buffer, offset, index → result
+# (e.g. setBuffer:offset:atIndex:)
+_objc_msgSend_cobj_i64_i64 = Function[[cobj, cobj, cobj, i64, i64], cobj](cobj())
+
+# Metal framework
+_mtlCreateSystemDefaultDevice = Function[[], cobj](cobj())
+
+# Selector cache
+_sel_name: SEL = cobj()
+_sel_release: SEL = cobj()
+_sel_retain: SEL = cobj()
+_sel_utf8String: SEL = cobj()
+_sel_newLibraryWithSource: SEL = cobj()
+_sel_newFunctionWithName: SEL = cobj()
+_sel_newComputePipelineStateWithFunction: SEL = cobj()
+_sel_newCommandQueue: SEL = cobj()
+_sel_newBufferWithLength: SEL = cobj()
+_sel_contents: SEL = cobj()
+_sel_length: SEL = cobj()
+_sel_commandBuffer: SEL = cobj()
+_sel_computeCommandEncoder: SEL = cobj()
+_sel_setComputePipelineState: SEL = cobj()
+_sel_setBuffer: SEL = cobj()
+_sel_dispatchThreadgroups: SEL = cobj()
+_sel_endEncoding: SEL = cobj()
+_sel_commit: SEL = cobj()
+_sel_waitUntilCompleted: SEL = cobj()
+_sel_localizedDescription: SEL = cobj()
+
+# Global Metal state
+_metal_device: cobj = cobj()
+_metal_library: cobj = cobj()
+_metal_command_queue: cobj = cobj()
+
+
+class MetalError(Exception):
+    code: int
+    def __init__(self, code: int = 0, message: str = ""):
+        super().__init__(message)
+        self.code = code
+
+
+def _sel(name: str) -> SEL:
+    return _sel_registerName(name.c_str())
+
+def _msg(obj: cobj, sel: SEL) -> cobj:
+    return _objc_msgSend(obj, sel)
+
+def _nsstring_from_str(s: str) -> cobj:
+    _cls_NSString = _msg(_objc_getClass("NSString".c_str()), _sel("alloc"))
+    _sel_initWithUTF8String = _sel("initWithUTF8String:")
+    return _objc_msgSend_3(_cls_NSString, _sel_initWithUTF8String, s.c_str())
+
+def _nsstring_to_str(ns_str: cobj) -> str:
+    cstr = _msg(ns_str, _sel_utf8String)
+    return str.from_ptr(cstr)
+
+# Additional Objective-C runtime function
+_objc_getClass = Function[[cobj], cobj](cobj())
+
+
+@tuple
+class Device:
+    _device: cobj
+
+    def __new__(idx: int = 0):
+        if idx != 0:
+            raise MetalError(0, "Metal device index selection not yet supported")
+        device = _mtlCreateSystemDefaultDevice()
+        if device == cobj():
+            raise MetalError(-1, "Metal is not supported on this device")
+        return superf(device)
+
+    def __str__(self):
+        name_ns = _msg(self._device, _sel_name)
+        return _nsstring_to_str(name_ns)
+
+    def __bool__(self):
+        return self._device != cobj()
+
+    def release(self):
+        if self._device != cobj():
+            _msg(self._device, _sel_release)
+
+    def retain(self):
+        if self._device != cobj():
+            _msg(self._device, _sel_retain)
+
+
+_METAL_INITIALIZED = False
+
+def metal_init_handles(objc_handle: cobj, metal_handle: cobj):
+    global _objc_msgSend, _sel_registerName
+    global _mtlCreateSystemDefaultDevice
+    global _objc_msgSend_3, _objc_msgSend_4
+    global _objc_msgSend_i64_i64, _objc_msgSend_5
+    global _objc_msgSend_cobj_i64_i64
+    global _objc_getClass
+
+    _objc_msgSend = dlsym(objc_handle, "objc_msgSend")
+    _objc_msgSend_3 = dlsym(objc_handle, "objc_msgSend")
+    _objc_msgSend_4 = dlsym(objc_handle, "objc_msgSend")
+    _objc_msgSend_i64_i64 = dlsym(objc_handle, "objc_msgSend")
+    _objc_msgSend_5 = dlsym(objc_handle, "objc_msgSend")
+    _objc_msgSend_cobj_i64_i64 = dlsym(objc_handle, "objc_msgSend")
+    _sel_registerName = dlsym(objc_handle, "sel_registerName")
+    _objc_getClass = dlsym(objc_handle, "objc_getClass")
+    _mtlCreateSystemDefaultDevice = dlsym(metal_handle, "MTLCreateSystemDefaultDevice")
+
+def metal_init_selectors():
+    global _sel_name, _sel_release, _sel_retain, _sel_utf8String
+    global _sel_newLibraryWithSource, _sel_newFunctionWithName
+    global _sel_newComputePipelineStateWithFunction, _sel_newCommandQueue
+    global _sel_newBufferWithLength, _sel_contents, _sel_length
+    global _sel_commandBuffer, _sel_computeCommandEncoder
+    global _sel_setComputePipelineState, _sel_setBuffer
+    global _sel_dispatchThreadgroups, _sel_endEncoding
+    global _sel_commit, _sel_waitUntilCompleted
+    global _sel_localizedDescription
+
+    _sel_name = _sel("name")
+    _sel_release = _sel("release")
+    _sel_retain = _sel("retain")
+    _sel_utf8String = _sel("UTF8String")
+    _sel_newLibraryWithSource = _sel("newLibraryWithSource:options:error:")
+    _sel_newFunctionWithName = _sel("newFunctionWithName:")
+    _sel_newComputePipelineStateWithFunction = _sel("newComputePipelineStateWithFunction:error:")
+    _sel_newCommandQueue = _sel("newCommandQueue")
+    _sel_newBufferWithLength = _sel("newBufferWithLength:options:")
+    _sel_contents = _sel("contents")
+    _sel_length = _sel("length")
+    _sel_commandBuffer = _sel("commandBuffer")
+    _sel_computeCommandEncoder = _sel("computeCommandEncoder")
+    _sel_setComputePipelineState = _sel("setComputePipelineState:")
+    _sel_setBuffer = _sel("setBuffer:offset:atIndex:")
+    _sel_dispatchThreadgroups = _sel("dispatchThreadgroups:threadsPerThreadgroup:")
+    _sel_endEncoding = _sel("endEncoding")
+    _sel_commit = _sel("commit")
+    _sel_waitUntilCompleted = _sel("waitUntilCompleted")
+    _sel_localizedDescription = _sel("localizedDescription")
+
+
+def metal_load_module():
+    from C import __codon_msl__() -> cobj
+
+    global _metal_library, _metal_device, _metal_command_queue
+
+    msl_ptr = __codon_msl__()
+    if msl_ptr == cobj():
+        return
+
+    # Create NSString from MSL source
+    msl_str = str.from_ptr(msl_ptr)
+    ns_source = _nsstring_from_str(msl_str)
+
+    # device.newLibrary(source:options:error:)
+    error: cobj = cobj()
+    error_ptr: cobj = __ptr__(error).as_byte()
+    library = _objc_msgSend_5(
+        _metal_device,
+        _sel_newLibraryWithSource,
+        ns_source,
+        cobj(),  # options: nil
+        error_ptr
+    )
+
+    if library == cobj():
+        err_desc = ""
+        if error != cobj():
+            ns_desc = _msg(error, _sel_localizedDescription)
+            err_desc = _nsstring_to_str(ns_desc)
+        raise MetalError(-2, f"Failed to compile MSL library: {err_desc}")
+
+    _metal_library = library
+
+    # Release the NSString
+    _msg(ns_source, _sel_release)
+
+
+def _clean_kernel_name(name: str) -> str:
+    result = List[str]()
+    first = True
+    for c in name:
+        ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_'
+        if not first:
+            ok = ok or (c >= '0' and c <= '9')
+        result.append(c if ok else '_')
+        first = False
+    cleaned = ''.join(result)
+    keywords = {'kernel', 'device', 'constant', 'thread', 'threadgroup',
+                'texture', 'sampler', 'float', 'half', 'int',
+                'uint', 'short', 'ushort', 'char', 'uchar',
+                'bool', 'void', 'long', 'ulong', 'size_t',
+                'true', 'false', 'if', 'else', 'for',
+                'while', 'do', 'switch', 'case', 'default',
+                'break', 'continue', 'return', 'struct', 'class',
+                'enum', 'union', 'namespace', 'using'}
+    if cleaned in keywords:
+        cleaned = '_' + cleaned
+    return cleaned
+
+def metal_function(name: str) -> cobj:
+    clean = _clean_kernel_name(name)
+    ns_name = _nsstring_from_str(clean)
+    func = _objc_msgSend_3(_metal_library, _sel_newFunctionWithName, ns_name)
+    _msg(ns_name, _sel_release)
+    if func == cobj():
+        raise MetalError(-3, f"Metal function '{clean}' not found in library")
+    return func
+
+
+def kernel(fn):
+    # Metal kernel decorator - marks function for MSL transpilation
+    # The actual compilation is handled by the metal.cpp pass
+    return fn
+
+
+# ============================================================================
+# GPU thread indexing intrinsics (maps to NVVM → Metal built-ins)
+# ============================================================================
+
+@pure
+@llvm
+def thread_idx_x() -> u32:
+    declare i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+    %res = call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+    ret i32 %res
+
+@pure
+@llvm
+def block_idx_x() -> u32:
+    declare i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+    %res = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+    ret i32 %res
+
+@pure
+@llvm
+def block_dim_x() -> u32:
+    declare i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+    %res = call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+    ret i32 %res
+
+def global_thread_id_x() -> int:
+    return int(block_dim_x()) * int(block_idx_x()) + int(thread_idx_x())
+
+
+# ============================================================================
+# High-level dispatch helpers
+# ============================================================================
+
+MTL_RESOURCE_STORAGE_MODE_SHARED = 0
+
+def metal_create_buffer(size: int) -> cobj:
+    buf = _objc_msgSend_i64_i64(
+        _metal_device, _sel_newBufferWithLength,
+        i64(size), i64(MTL_RESOURCE_STORAGE_MODE_SHARED))
+    if buf == cobj():
+        raise MetalError(-4, "Failed to create Metal buffer")
+    return buf
+
+def metal_buffer_contents(buf: cobj) -> cobj:
+    return _msg(buf, _sel_contents)
+
+def metal_create_pipeline(func_name: str) -> cobj:
+    func = metal_function(func_name)
+    error: cobj = cobj()
+    error_ptr: cobj = __ptr__(error).as_byte()
+    pipeline = _objc_msgSend_4(
+        _metal_device, _sel_newComputePipelineStateWithFunction,
+        func, error_ptr)
+    _msg(func, _sel_release)
+    if pipeline == cobj():
+        err_desc = ""
+        if error != cobj():
+            ns_desc = _msg(error, _sel_localizedDescription)
+            err_desc = _nsstring_to_str(ns_desc)
+        raise MetalError(-5, f"Failed to create pipeline: {err_desc}")
+    return pipeline
+
+@tuple
+class MTLSize:
+    width: i64
+    height: i64
+    depth: i64
+
+def metal_dispatch_1d(pipeline: cobj, buffers: List[cobj],
+                      grid_x: int = 1, threadgroup_x: int = 1):
+    cmd_buf = _msg(_metal_command_queue, _sel_commandBuffer)
+    encoder = _msg(cmd_buf, _sel_computeCommandEncoder)
+
+    # Set pipeline state
+    _objc_msgSend_3(encoder, _sel_setComputePipelineState, pipeline)
+
+    # Bind buffers
+    for i in range(len(buffers)):
+        _objc_msgSend_cobj_i64_i64(
+            encoder, _sel_setBuffer,
+            buffers[i], i64(0), i64(i))
+
+    # Dispatch threadgroups
+    # ARM64 ABI: MTLSize (24 bytes > 16 bytes) is passed by reference
+    grid = MTLSize(i64(grid_x), i64(1), i64(1))
+    threadgroup = MTLSize(i64(threadgroup_x), i64(1), i64(1))
+    _objc_msgSend_4(
+        encoder, _sel_dispatchThreadgroups,
+        __ptr__(grid).as_byte(),
+        __ptr__(threadgroup).as_byte())
+
+    # End encoding, commit, and wait
+    _msg(encoder, _sel_endEncoding)
+    _msg(cmd_buf, _sel_commit)
+    _msg(cmd_buf, _sel_waitUntilCompleted)
+
+def metal_release(obj: cobj):
+    if obj != cobj():
+        _msg(obj, _sel_release)
+
+
+def metal_init(debug: bool = False):
+    global _METAL_INITIALIZED, _metal_device, _metal_command_queue
+    if _METAL_INITIALIZED:
+        return
+
+    import sys, os
+
+    objc_handle = dlopen("/usr/lib/libobjc.A.dylib", RTLD_LOCAL | RTLD_LAZY)
+
+    METAL_LIB = os.getenv("CODON_METAL",
+        default="/System/Library/Frameworks/Metal.framework/Metal")
+    metal_handle = dlopen(METAL_LIB, RTLD_LOCAL | RTLD_LAZY)
+
+    metal_init_handles(objc_handle, metal_handle)
+    metal_init_selectors()
+
+    # Initialize default device
+    _metal_device = _mtlCreateSystemDefaultDevice()
+    if _metal_device == cobj():
+        raise MetalError(-1, "Metal is not supported on this device")
+
+    # Create command queue
+    _metal_command_queue = _msg(_metal_device, _sel_newCommandQueue)
+
+    # Load compiled MSL module (if any kernels were compiled)
+    metal_load_module()
+
+    if debug:
+        d = Device(0)
+        print(f"[Metal] Initialized: device={d}", file=sys.stderr)
+
+    _METAL_INITIALIZED = True

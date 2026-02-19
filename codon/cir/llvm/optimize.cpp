@@ -6,6 +6,7 @@
 #include <deque>
 
 #include "codon/cir/llvm/gpu.h"
+#include "codon/cir/llvm/metal.h"
 #include "codon/cir/llvm/llvisitor.h"
 #include "codon/cir/llvm/native/native.h"
 #include "codon/util/common.h"
@@ -1085,6 +1086,10 @@ void optimize(llvm::Module *module, bool debug, bool jit, PluginManager *plugins
   {
     TIME("llvm/gpu");
     applyGPUTransformations(module);
+  }
+  {
+    TIME("llvm/metal");
+    applyMetalTransformations(module);
   }
   verify(module);
 }

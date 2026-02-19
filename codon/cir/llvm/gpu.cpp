@@ -888,6 +888,10 @@ void patchPTXVar(llvm::Module *M, llvm::GlobalValue *ptxVar,
 } // namespace
 
 void applyGPUTransformations(llvm::Module *M, const std::string &ptxFilename) {
+  // Check if __codon_ptx__ stub exists; if not, CUDA/GPU is not being used
+  if (!M->getFunction("__codon_ptx__"))
+    return;
+
   llvm::LLVMContext &context = M->getContext();
   std::unique_ptr<llvm::Module> clone = llvm::CloneModule(*M);
   clone->setTargetTriple(llvm::Triple::normalize(GPU_TRIPLE));
